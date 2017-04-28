@@ -1,110 +1,60 @@
 package gsnake
+
 import (
-    "path/filepath"
-    "strconv"
-    "log"
-    "github.com/golang/glog"
+	"github.com/golang/glog"
+	"log"
 )
 
-
 type FilesHandler struct {
-    dir string
-    priorityLevel int
+	dirs   []string
+	Reader *DirReader
+	paths  []string
+	conf   *Conf
 
-    readers map[string/*path dir*/]*DirReader
-    paths []string
+	ProcessedEventCounts int64
 }
 
-func NewFilesHandler(dir string) (h *FilesHandler, err error) {
-    h = &FilesHandler{}
-    h.dir = dir
-    h.priorityLevel = *priorityLevel
-    h.readers = make(map[string/*path*/]*DirReader)
+func NewFilesHandler(conf *Conf, dirs []string) (h *FilesHandler, err error) {
+	h = &FilesHandler{}
+	h.dirs = dirs
+	h.conf = conf
 
-    if h.priorityLevel <= 0 {
-        h.readers[dir], err = NewPathReader(dir)
-        if err != nil {
-            return nil, err
-        }
-        h.paths = append(h.paths, dir)
-        glog.Infof("Add dir <%v> to read", dir)
-    } else {
-        for i := 0; i < h.priorityLevel; i++ {
-            p := filepath.Join(dir, strconv.Itoa(i))
-            h.readers[p], err = NewPathReader(p)
-            if err != nil {
-                return nil, err
-            }
-            h.paths = append(h.paths, p)
-            glog.Infof("Add dir <%v> to read", dir)
-        }
-    }
+	h.Reader, err = NewDirReader(conf)
 
-    return h, nil
+	return h, nil
 }
 
 func (h *FilesHandler) Run() {
-    glog.Infof("FilesHandler Running ...")
-    ff, err := LookupFiles(h.dir, *filePattern)
-    if err != nil {
-        log.Fatal("LoopupFiles <%s> with pathern <%s> failed : %v\n", dir, *filePattern, err.Error())
-    }
+	glog.V(3).Infof("FilesHandler Running ...")
+	for _, dir := range h.dirs {
+		ff, err := LookupFiles(dir, h.conf.FilePattern)
+		if err != nil {
+			log.Fatal("LoopupFiles <%s> with pathern <%s> failed : %v\n", dir, h.conf.FilePattern, err.Error())
+		}
 
-    glog.Infof("existing files: %v", ff)
-    for _, f := range ff {
-        if !dispatcher.status.IsProcessed(f) {
-            h.OnFileCreated(f)
-        } else {
-            glog.Infof("Skip processed file: %v", f)
-        }
-    }
-
-    if h.priorityLevel <= 0 { // no priority
-        r, _ := h.readers[h.dir]
-        r.Read()
-    } else {
-        for priority := 0; priority < len(h.readers); priority++ {
-            r, _ := h.readers[h.paths[priority]]
-            // Currently the routine will block here and only process the first data dir (the highest priority)
-            // TODO add priority logic and we can process next dir
-            r.Read()
-        }
-    }
+		glog.V(3).Infof("%v existing files: %v", dir, ff)
+		for _, f := range ff {
+			h.OnFileCreated(f)
+		}
+	}
+	h.Reader.Read()
 }
 
 func (h *FilesHandler) Stop() {
-    if h.priorityLevel <= 0 { // no priority
-        r, _ := h.readers[h.dir]
-        r.Stop()
-    } else {
-        for priority := 0; priority < len(h.readers); priority++ {
-            r, _ := h.readers[h.paths[priority]]
-            // Currently the routine will block here and only process the first data dir (the highest priority)
-            // TODO add priority logic and we can process next dir
-            r.Stop()
-        }
-    }
+	h.Reader.Stop()
 }
 
 func (h *FilesHandler) OnFileModified(file string) {
-    dir := filepath.Dir(file)
-    if r, ok := h.readers[dir]; ok {
-        r.OnFileModified(file)
-    } else {
-        glog.Errorf("Append file failed, cannot found reader <%v> for this file <%v>", dir, file)
-    }
+	h.ProcessedEventCounts++
+	h.Reader.OnFileModified(file)
+}
+
+func (h *FilesHandler) OnFileDeleted(file string) {
+	h.ProcessedEventCounts++
+	h.Reader.OnFileDeleted(file)
 }
 
 func (h *FilesHandler) OnFileCreated(file string) {
-    dir := filepath.Dir(file)
-    if r, ok := h.readers[dir]; ok {
-        r.OnFileCreated(file)
-    } else {
-        glog.Errorf("Append file failed, cannot found reader <%v> for this file <%v>", dir, file)
-    }
-}
-
-func (h* FilesHandler) RecordPos() (err error) {
-    //TODO
-    return nil
+	h.ProcessedEventCounts++
+	h.Reader.OnFileCreated(file)
 }
