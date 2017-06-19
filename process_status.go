@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -47,6 +48,7 @@ type ProcessStatus struct {
 	StatusFileFp *os.File // The file pointer to the status file
 
 	counter int //processed count when
+	mutex   sync.Mutex
 }
 
 func NewProcessStatus(StatusFile string) (ps *ProcessStatus, err error) {
@@ -76,7 +78,9 @@ func NewProcessStatus(StatusFile string) (ps *ProcessStatus, err error) {
 }
 
 func (ps *ProcessStatus) IsProcessed(file string) bool {
+	ps.mutex.Lock()
 	_, ok := ps.processedFiles[file]
+	ps.mutex.Unlock()
 	return ok
 }
 
@@ -86,6 +90,7 @@ func (ps *ProcessStatus) GetProcessedFiles() map[string]FileProcessingTime {
 
 func (ps *ProcessStatus) OnFileProcessingFinished(path string, startProcessing time.Time, pos int) {
 	ps.counter++
+	ps.mutex.Lock()
 	var t FileProcessingTime
 	ot, found := ps.processedFiles[path]
 	t.Start = startProcessing
@@ -93,6 +98,7 @@ func (ps *ProcessStatus) OnFileProcessingFinished(path string, startProcessing t
 	t.ReadPos = pos
 	t.f = path
 	ps.processedFiles[path] = t
+	ps.mutex.Unlock()
 
 	//TODO fix this may lost last seconds info
 	if found {
@@ -112,7 +118,9 @@ func (ps *ProcessStatus) OnFileProcessingFinished(path string, startProcessing t
 }
 
 func (ps *ProcessStatus) OnFileDeleted(path string) {
+	ps.mutex.Lock()
 	delete(ps.processedFiles, path)
+	ps.mutex.Unlock()
 }
 
 func (ps *ProcessStatus) Close() {
@@ -122,7 +130,9 @@ func (ps *ProcessStatus) Close() {
 	} // flush all data to files
 }
 func (ps *ProcessStatus) LastPos(file string) int {
+	ps.mutex.Lock()
 	t, ok := ps.processedFiles[file]
+	ps.mutex.Unlock()
 	if ok {
 		return t.ReadPos
 	}
@@ -160,7 +170,9 @@ func (ps *ProcessStatus) parse() error {
 		}
 		t.f = path
 		t.ReadPos = pos
+		ps.mutex.Lock()
 		ps.processedFiles[path] = t
+		ps.mutex.Unlock()
 	}
 	return nil
 }
@@ -204,17 +216,21 @@ func (ps *ProcessStatus) saveAll() error {
 	//stat, err := ps.StatusFileFp.Stat()
 	//log.Printf("%v len=%v", stat.Name(), stat.Size())
 	var files StringArray
+	ps.mutex.Lock()
 	for k, _ := range ps.processedFiles {
 		files = append(files, k)
 	}
+	ps.mutex.Unlock()
 	sort.Sort(files)
 	//log.Print(files)
 
 	w := ps.StatusFileFp
 	for _, f := range files {
+		ps.mutex.Lock()
 		if t, ok := ps.processedFiles[f]; ok {
 			w.WriteString(t.String())
 		}
+		ps.mutex.Unlock()
 	}
 	w.Sync()
 	return nil
