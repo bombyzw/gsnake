@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"time"
 )
 
 type TextFileReader interface {
@@ -88,6 +89,7 @@ func (r *FileTailReader) readTextFile() {
 					r.onRecord(line)
 				}
 			}
+			time.Sleep(time.Second)
 			break
 		} else if err != nil {
 			glog.Errorf("Read data from <%s> failed : %v", r.path, err.Error())
